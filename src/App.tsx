@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
 import "./App.css";
 
@@ -14,23 +15,45 @@ interface PasteWarning {
   source_app_name: string | null;
   dest_app_id: string | null;
   dest_app_name: string | null;
+  blocked: boolean;
 }
 
 interface TimestampedWarning extends PasteWarning {
   ts: number;
 }
 
+type RuleAction = "notify" | "block";
+
+interface BlockRule {
+  from_app_id: string | null;
+  from_app_name: string | null;
+  to_app_id: string | null;
+  to_app_name: string | null;
+  action: RuleAction;
+}
+
+interface AppBundleInfo {
+  bundle_id: string;
+  name: string;
+}
+
 function App() {
   const [guardEnabled, setGuardEnabled] = useState(true);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [lastSource, setLastSource] = useState<ClipboardEvent | null>(null);
-  const [recentWarnings, setRecentWarnings] = useState<TimestampedWarning[]>([]);
+  const [recentWarnings, setRecentWarnings] = useState<TimestampedWarning[]>(
+    []
+  );
+  const [rules, setRules] = useState<BlockRule[]>([]);
+  const [accessibilityGranted, setAccessibilityGranted] = useState(false);
 
   useEffect(() => {
     const cleanups: (() => void)[] = [];
 
     invoke<boolean>("get_enabled").then(setGuardEnabled);
     isEnabled().then(setAutostartEnabled);
+    invoke<BlockRule[]>("get_rules").then(setRules);
+    invoke<boolean>("check_accessibility").then(setAccessibilityGranted);
 
     listen<ClipboardEvent>("clipboard-changed", (e) => {
       setLastSource(e.payload);
@@ -45,6 +68,15 @@ function App() {
     listen<boolean>("guard-toggled", (e) => {
       setGuardEnabled(e.payload);
     }).then((f) => cleanups.push(f));
+
+    // Re-check accessibility on window focus (catches revocations)
+    getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) {
+          invoke<boolean>("check_accessibility").then(setAccessibilityGranted);
+        }
+      })
+      .then((f) => cleanups.push(f));
 
     return () => cleanups.forEach((f) => f());
   }, []);
@@ -62,6 +94,81 @@ function App() {
       await enable();
     }
     setAutostartEnabled(!autostartEnabled);
+  };
+
+  const saveRules = async (updated: BlockRule[]) => {
+    setRules(updated);
+    await invoke("set_rules", { newRules: updated });
+  };
+
+  const pickApp = async (): Promise<AppBundleInfo | null> => {
+    const result = await invoke<AppBundleInfo | null>("pick_app");
+    return result;
+  };
+
+  const updateRule = (index: number, patch: Partial<BlockRule>) => {
+    const updated = rules.map((r, i) => (i === index ? { ...r, ...patch } : r));
+    saveRules(updated);
+  };
+
+  const removeRule = (index: number) => {
+    saveRules(rules.filter((_, i) => i !== index));
+  };
+
+  const addRule = () => {
+    saveRules([
+      ...rules,
+      {
+        from_app_id: null,
+        from_app_name: null,
+        to_app_id: null,
+        to_app_name: null,
+        action: "notify",
+      },
+    ]);
+  };
+
+  const browseFrom = async (index: number) => {
+    const info = await pickApp();
+    if (info) {
+      updateRule(index, {
+        from_app_id: info.bundle_id,
+        from_app_name: info.name,
+      });
+    }
+  };
+
+  const browseTo = async (index: number) => {
+    const info = await pickApp();
+    if (info) {
+      updateRule(index, {
+        to_app_id: info.bundle_id,
+        to_app_name: info.name,
+      });
+    }
+  };
+
+  const clearFrom = (index: number) => {
+    updateRule(index, { from_app_id: null, from_app_name: null });
+  };
+
+  const clearTo = (index: number) => {
+    updateRule(index, { to_app_id: null, to_app_name: null });
+  };
+
+  const toggleAction = (index: number) => {
+    const current = rules[index].action;
+    updateRule(index, { action: current === "notify" ? "block" : "notify" });
+  };
+
+  const isInvalidRule = (r: BlockRule) =>
+    r.from_app_id === null && r.to_app_id === null;
+
+  const hasBlockRules = rules.some((r) => r.action === "block");
+
+  const refreshAccessibility = async () => {
+    const granted = await invoke<boolean>("check_accessibility");
+    setAccessibilityGranted(granted);
   };
 
   return (
@@ -89,11 +196,111 @@ function App() {
         </div>
       </section>
 
+      {hasBlockRules && (
+        <section
+          className={`permission-banner ${accessibilityGranted ? "granted" : "warning"}`}
+        >
+          <div className="row space-between">
+            <span>
+              {accessibilityGranted
+                ? "Accessibility permission granted"
+                : "Block rules require Accessibility permission"}
+            </span>
+            {!accessibilityGranted && (
+              <div className="permission-actions">
+                <button
+                  className="btn-permission"
+                  onClick={() => invoke("open_accessibility_settings")}
+                >
+                  Grant
+                </button>
+                <button className="btn-refresh" onClick={refreshAccessibility}>
+                  Check
+                </button>
+              </div>
+            )}
+          </div>
+          {!accessibilityGranted && (
+            <p className="muted">
+              Without it, block rules will only notify.
+            </p>
+          )}
+        </section>
+      )}
+
+      <section className="card">
+        <h2>Rules</h2>
+        {rules.map((rule, i) => (
+          <div
+            key={i}
+            className={`rule-row ${isInvalidRule(rule) ? "rule-invalid" : ""}`}
+          >
+            <div className="rule-field">
+              <span className="rule-label">From</span>
+              <span className="rule-app">
+                {rule.from_app_name ?? "Any App"}
+              </span>
+              <div className="rule-btns">
+                <button className="btn-browse" onClick={() => browseFrom(i)}>
+                  Browse
+                </button>
+                {rule.from_app_id && (
+                  <button className="btn-clear" onClick={() => clearFrom(i)}>
+                    x
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <span className="rule-arrow">→</span>
+
+            <div className="rule-field">
+              <span className="rule-label">To</span>
+              <span className="rule-app">
+                {rule.to_app_name ?? "All Apps"}
+              </span>
+              <div className="rule-btns">
+                <button className="btn-browse" onClick={() => browseTo(i)}>
+                  Browse
+                </button>
+                {rule.to_app_id && (
+                  <button className="btn-clear" onClick={() => clearTo(i)}>
+                    x
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <button
+              className={`action-toggle ${rule.action === "block" ? "action-block" : "action-notify"}`}
+              onClick={() => toggleAction(i)}
+            >
+              {rule.action === "notify" ? "Notify" : "Block"}
+            </button>
+
+            <button className="btn-remove" onClick={() => removeRule(i)}>
+              ×
+            </button>
+
+            {isInvalidRule(rule) && (
+              <span className="rule-error">
+                At least one app must be specified
+              </span>
+            )}
+          </div>
+        ))}
+        <button className="btn-add" onClick={addRule}>
+          + Add Rule
+        </button>
+      </section>
+
       <section className="card">
         <h2>Last Clipboard Source</h2>
         {lastSource ? (
           <p className="source-info">
-            {lastSource.source_app_name ?? lastSource.source_app_id ?? "Unknown"}
+            {lastSource.source_app_name ??
+              lastSource.source_app_id ??
+              "Unknown"}
           </p>
         ) : (
           <p className="muted">No clipboard activity yet</p>

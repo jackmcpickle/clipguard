@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "secure-cross-app-copy-paste",
+  "productName": "Clipboard Guard",
   "version": "0.1.0",
-  "identifier": "com.jackmcpickle.secure-cross-app-copy-paste",
+  "identifier": "com.jackmcpickle.clipboard-guard",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -14,8 +14,9 @@
       {
         "title": "Clipboard Guard",
         "width": 400,
-        "height": 300,
+        "height": 600,
         "visible": false,
+        "resizable": true,
         "skipTaskbar": true
       }
     ],
@@ -25,13 +26,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["dmg", "app"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "signingIdentity": null
+    }
   }
 }
