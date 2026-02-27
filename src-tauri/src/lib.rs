@@ -1,4 +1,5 @@
-use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -10,6 +11,10 @@ use tauri::{
 
 #[cfg(target_os = "macos")]
 mod clipboard;
+#[cfg(not(target_os = "macos"))]
+#[path = "clipboard_stub.rs"]
+mod clipboard;
+mod config;
 mod rules;
 
 use clipboard::ClipboardState;
@@ -76,6 +81,7 @@ fn set_rules(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn read_app_bundle_info(path: &Path) -> Option<(String, String)> {
     let plist_path = path.join("Contents/Info.plist");
     let val = plist::Value::from_file(&plist_path).ok()?;
@@ -91,26 +97,40 @@ fn read_app_bundle_info(path: &Path) -> Option<(String, String)> {
 }
 
 #[tauri::command]
-async fn pick_app(app: tauri::AppHandle) -> Result<Option<AppBundleInfo>, String> {
-    use tauri_plugin_dialog::DialogExt;
+fn list_apps() -> Vec<AppBundleInfo> {
+    list_installed_apps()
+}
 
-    // macOS treats .app bundles as packages (opaque files) in open dialogs
-    let file_path = app
-        .dialog()
-        .file()
-        .set_directory("/Applications")
-        .add_filter("Applications", &["app"])
-        .blocking_pick_file();
-
-    let Some(picked) = file_path else {
-        return Ok(None);
-    };
-
-    let path = picked.into_path().map_err(|e| e.to_string())?;
-    match read_app_bundle_info(&path) {
-        Some((bundle_id, name)) => Ok(Some(AppBundleInfo { bundle_id, name })),
-        None => Err(format!("Could not read bundle info from {:?}", path)),
+#[cfg(target_os = "macos")]
+fn list_installed_apps() -> Vec<AppBundleInfo> {
+    let dirs = [
+        PathBuf::from("/Applications"),
+        std::env::var("HOME")
+            .ok()
+            .map(|h| PathBuf::from(h).join("Applications"))
+            .unwrap_or_default(),
+    ];
+    let mut apps = Vec::new();
+    for dir in &dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "app") {
+                    if let Some((bundle_id, name)) = read_app_bundle_info(&path) {
+                        apps.push(AppBundleInfo { bundle_id, name });
+                    }
+                }
+            }
+        }
     }
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps.dedup_by(|a, b| a.bundle_id == b.bundle_id);
+    apps
+}
+
+#[cfg(not(target_os = "macos"))]
+fn list_installed_apps() -> Vec<AppBundleInfo> {
+    Vec::new()
 }
 
 #[tauri::command]
@@ -149,14 +169,13 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_clipboard_source,
             get_enabled,
             set_enabled,
             get_rules,
             set_rules,
-            pick_app,
+            list_apps,
             check_accessibility,
             open_accessibility_settings,
         ])
@@ -164,6 +183,15 @@ pub fn run() {
             // Hide dock icon — tray-only app
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // Auto-enable launch at login on first run
+            let mut app_config = config::load(&app.handle());
+            if !app_config.autostart_initialized {
+                use tauri_plugin_autostart::ManagerExt;
+                let _ = app.autolaunch().enable();
+                app_config.autostart_initialized = true;
+                let _ = config::save(&app.handle(), &app_config);
+            }
 
             // Load rules
             let loaded_rules = rules::load(&app.handle());
@@ -177,20 +205,16 @@ pub fn run() {
             }));
 
             // Build tray menu
-            let toggle_item =
-                MenuItemBuilder::with_id("toggle", "Disable Guard").build(app)?;
+            let toggle_item = MenuItemBuilder::with_id("toggle", "Disable Guard").build(app)?;
             let show_item = MenuItemBuilder::with_id("show", "Settings...").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = Menu::with_items(app, &[&toggle_item, &show_item, &quit_item])?;
 
             // Build tray icon
-            let icon = app
-                .default_window_icon()
-                .cloned()
-                .unwrap_or_else(|| {
-                    tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
-                        .expect("bundled icon")
-                });
+            let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
+                tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
+                    .expect("bundled icon")
+            });
 
             app.manage(ToggleMenuItem(toggle_item.clone()));
 
