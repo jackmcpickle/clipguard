@@ -59,10 +59,10 @@ function App() {
     useEffect(() => {
         const cleanups: (() => void)[] = [];
 
-        invoke<boolean>('get_enabled').then(setGuardEnabled);
-        invoke<boolean>('is_windows_platform').then(setIsWindowsPlatform);
-        isEnabled().then(setAutostartEnabled);
-        invoke<BlockRule[]>('get_rules').then((loaded) => {
+        void invoke<boolean>('get_enabled').then(setGuardEnabled);
+        void invoke<boolean>('is_windows_platform').then(setIsWindowsPlatform);
+        void isEnabled().then(setAutostartEnabled);
+        void invoke<BlockRule[]>('get_rules').then((loaded) => {
             if (loaded.length === 0) {
                 const defaultRule: BlockRule = {
                     from_app_id: null,
@@ -76,27 +76,29 @@ function App() {
                 setRules(loaded);
             }
         });
-        invoke<boolean>('check_accessibility').then(setAccessibilityGranted);
+        void invoke<boolean>('check_accessibility').then(
+            setAccessibilityGranted,
+        );
 
-        listen<ClipboardEvent>('clipboard-changed', (e) => {
+        void listen<ClipboardEvent>('clipboard-changed', (e) => {
             setLastSource(e.payload);
         }).then((f) => cleanups.push(f));
 
-        listen<PasteWarning>('paste-warning', (e) => {
+        void listen<PasteWarning>('paste-warning', (e) => {
             setRecentWarnings((prev) =>
                 [{ ...e.payload, ts: Date.now() }, ...prev].slice(0, 20),
             );
         }).then((f) => cleanups.push(f));
 
-        listen<boolean>('guard-toggled', (e) => {
+        void listen<boolean>('guard-toggled', (e) => {
             setGuardEnabled(e.payload);
         }).then((f) => cleanups.push(f));
 
         // Re-check accessibility on window focus (catches revocations)
-        getCurrentWindow()
+        void getCurrentWindow()
             .onFocusChanged(({ payload: focused }) => {
                 if (focused) {
-                    invoke<boolean>('check_accessibility').then(
+                    void invoke<boolean>('check_accessibility').then(
                         setAccessibilityGranted,
                     );
                 }
@@ -110,25 +112,25 @@ function App() {
         };
     }, []);
 
-    const toggleGuard = async () => {
+    async function toggleGuard() {
         const next = !guardEnabled;
         await invoke('set_enabled', { enabled: next });
         setGuardEnabled(next);
-    };
+    }
 
-    const toggleAutostart = async () => {
+    async function toggleAutostart() {
         if (autostartEnabled) {
             await disable();
         } else {
             await enable();
         }
         setAutostartEnabled(!autostartEnabled);
-    };
+    }
 
-    const saveRules = async (updated: BlockRule[]) => {
+    async function saveRules(updated: BlockRule[]) {
         setRules(updated);
         await invoke('set_rules', { newRules: updated });
-    };
+    }
 
     const openAppPicker = useCallback(
         async (callback: (app: AppBundleInfo) => void) => {
@@ -214,19 +216,19 @@ function App() {
         selectApp({ bundle_id: manual.value, name: manual.value });
     }, [appList, appPickerSearch, parseManualAppId, selectApp]);
 
-    const updateRule = (index: number, patch: Partial<BlockRule>) => {
+    function updateRule(index: number, patch: Partial<BlockRule>) {
         const updated = rules.map((r, i) =>
             i === index ? { ...r, ...patch } : r,
         );
-        saveRules(updated);
-    };
+        void saveRules(updated);
+    }
 
-    const removeRule = (index: number) => {
-        saveRules(rules.filter((_, i) => i !== index));
-    };
+    function removeRule(index: number) {
+        void saveRules(rules.filter((_, i) => i !== index));
+    }
 
-    const addRule = () => {
-        saveRules([
+    function addRule() {
+        void saveRules([
             ...rules,
             {
                 from_app_id: null,
@@ -236,50 +238,51 @@ function App() {
                 action: 'notify',
             },
         ]);
-    };
+    }
 
-    const browseFrom = (index: number) => {
-        openAppPicker((app) => {
+    function browseFrom(index: number) {
+        void openAppPicker((app) => {
             updateRule(index, {
                 from_app_id: app.bundle_id,
                 from_app_name: app.name,
             });
         });
-    };
+    }
 
-    const browseTo = (index: number) => {
-        openAppPicker((app) => {
+    function browseTo(index: number) {
+        void openAppPicker((app) => {
             updateRule(index, {
                 to_app_id: app.bundle_id,
                 to_app_name: app.name,
             });
         });
-    };
+    }
 
-    const clearFrom = (index: number) => {
+    function clearFrom(index: number) {
         updateRule(index, { from_app_id: null, from_app_name: null });
-    };
+    }
 
-    const clearTo = (index: number) => {
+    function clearTo(index: number) {
         updateRule(index, { to_app_id: null, to_app_name: null });
-    };
+    }
 
-    const toggleAction = (index: number) => {
+    function toggleAction(index: number) {
         const current = rules[index].action;
         updateRule(index, {
             action: current === 'notify' ? 'block' : 'notify',
         });
-    };
+    }
 
-    const isInvalidRule = (r: BlockRule) =>
-        r.from_app_id === null && r.to_app_id === null;
+    function isInvalidRule(r: BlockRule) {
+        return r.from_app_id === null && r.to_app_id === null;
+    }
 
     const hasBlockRules = rules.some((r) => r.action === 'block');
 
-    const refreshAccessibility = async () => {
+    async function refreshAccessibility() {
         const granted = await invoke<boolean>('check_accessibility');
         setAccessibilityGranted(granted);
-    };
+    }
 
     const filteredApps = appList.filter((a) => {
         const q = appPickerSearch.toLowerCase();
@@ -486,13 +489,17 @@ function App() {
             </section>
             {appPickerOpen && (
                 <div
+                    role="presentation"
                     className="app-picker-overlay"
                     onClick={closeAppPicker}
-                    onKeyDown={(e) => e.key === 'Escape' && closeAppPicker()}
                 >
                     <div
+                        role="dialog"
                         className="app-picker-modal"
                         onClick={(e) => {
+                            e.stopPropagation();
+                        }}
+                        onKeyDown={(e) => {
                             e.stopPropagation();
                         }}
                     >
