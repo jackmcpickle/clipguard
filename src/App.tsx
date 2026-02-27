@@ -2,7 +2,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import {
+    useEffect,
+    useState,
+    useRef,
+    useCallback,
+    type ReactElement,
+} from 'react';
+import { AppPickerModal } from './AppPickerModal';
+import type { AppBundleInfo } from './AppPickerModal';
 import './App.css';
 
 interface ClipboardEvent {
@@ -32,12 +40,21 @@ interface BlockRule {
     action: RuleAction;
 }
 
-interface AppBundleInfo {
-    bundle_id: string;
-    name: string;
+interface BlockRuleWithId extends BlockRule {
+    id: string;
 }
 
-function App() {
+let ruleIdCounter = 0;
+function nextRuleId(): string {
+    ruleIdCounter += 1;
+    return String(ruleIdCounter);
+}
+
+function withId(rule: BlockRule): BlockRuleWithId {
+    return { ...rule, id: nextRuleId() };
+}
+
+function App(): ReactElement {
     const [isWindowsPlatform, setIsWindowsPlatform] = useState(false);
     const [guardEnabled, setGuardEnabled] = useState(true);
     const [autostartEnabled, setAutostartEnabled] = useState(false);
@@ -45,18 +62,15 @@ function App() {
     const [recentWarnings, setRecentWarnings] = useState<TimestampedWarning[]>(
         [],
     );
-    const [rules, setRules] = useState<BlockRule[]>([]);
+    const [rules, setRules] = useState<BlockRuleWithId[]>([]);
     const [accessibilityGranted, setAccessibilityGranted] = useState(false);
     const [appList, setAppList] = useState<AppBundleInfo[]>([]);
     const [appPickerOpen, setAppPickerOpen] = useState(false);
-    const [appPickerSearch, setAppPickerSearch] = useState('');
-    const [appPickerError, setAppPickerError] = useState<string | null>(null);
     const appPickerCallbackRef = useRef<((app: AppBundleInfo) => void) | null>(
         null,
     );
-    const searchInputRef = useRef<HTMLInputElement>(null);
 
-    useEffect(() => {
+    useEffect((): (() => void) => {
         const cleanups: (() => void)[] = [];
 
         void invoke<boolean>('get_enabled').then(setGuardEnabled);
@@ -64,16 +78,17 @@ function App() {
         void isEnabled().then(setAutostartEnabled);
         void invoke<BlockRule[]>('get_rules').then((loaded) => {
             if (loaded.length === 0) {
-                const defaultRule: BlockRule = {
-                    from_app_id: null,
-                    from_app_name: null,
-                    to_app_id: null,
-                    to_app_name: null,
-                    action: 'notify',
-                };
-                setRules([defaultRule]);
+                setRules([
+                    withId({
+                        from_app_id: null,
+                        from_app_name: null,
+                        to_app_id: null,
+                        to_app_name: null,
+                        action: 'notify',
+                    }),
+                ]);
             } else {
-                setRules(loaded);
+                setRules(loaded.map(withId));
             }
         });
         void invoke<boolean>('check_accessibility').then(
@@ -94,7 +109,6 @@ function App() {
             setGuardEnabled(e.payload);
         }).then((f) => cleanups.push(f));
 
-        // Re-check accessibility on window focus (catches revocations)
         void getCurrentWindow()
             .onFocusChanged(({ payload: focused }) => {
                 if (focused) {
@@ -105,20 +119,20 @@ function App() {
             })
             .then((f) => cleanups.push(f));
 
-        return () => {
+        return (): void => {
             cleanups.forEach((f) => {
                 f();
             });
         };
     }, []);
 
-    async function toggleGuard() {
+    async function toggleGuard(): Promise<void> {
         const next = !guardEnabled;
         await invoke('set_enabled', { enabled: next });
         setGuardEnabled(next);
     }
 
-    async function toggleAutostart() {
+    async function toggleAutostart(): Promise<void> {
         if (autostartEnabled) {
             await disable();
         } else {
@@ -127,120 +141,59 @@ function App() {
         setAutostartEnabled(!autostartEnabled);
     }
 
-    async function saveRules(updated: BlockRule[]) {
+    async function saveRules(updated: BlockRuleWithId[]): Promise<void> {
         setRules(updated);
         await invoke('set_rules', { newRules: updated });
     }
 
     const openAppPicker = useCallback(
-        async (callback: (app: AppBundleInfo) => void) => {
+        async (callback: (app: AppBundleInfo) => void): Promise<void> => {
             appPickerCallbackRef.current = callback;
-            setAppPickerSearch('');
-            setAppPickerError(null);
             const apps = await invoke<AppBundleInfo[]>('list_apps');
             setAppList(apps);
             setAppPickerOpen(true);
-            setTimeout(() => searchInputRef.current?.focus(), 0);
         },
         [],
     );
 
-    const closeAppPicker = useCallback(() => {
+    const closeAppPicker = useCallback((): void => {
         setAppPickerOpen(false);
         appPickerCallbackRef.current = null;
     }, []);
 
     const selectApp = useCallback(
-        (app: AppBundleInfo) => {
+        (app: AppBundleInfo): void => {
             appPickerCallbackRef.current?.(app);
             closeAppPicker();
         },
         [closeAppPicker],
     );
 
-    const parseManualAppId = useCallback(
-        (raw: string) => {
-            const trimmed = raw.trim().replace(/^['"]+|['"]+$/g, '');
-            if (!trimmed) {
-                return { value: null, error: 'Enter an app id' };
-            }
-
-            if (!isWindowsPlatform) {
-                return { value: trimmed, error: null };
-            }
-
-            if (trimmed.includes('\\') || trimmed.includes('/')) {
-                return {
-                    value: null,
-                    error: 'Use exe name only (example: msedge.exe)',
-                };
-            }
-
-            const normalized = trimmed.toLowerCase();
-            if (!normalized.endsWith('.exe')) {
-                return {
-                    value: null,
-                    error: 'Windows app id must end with .exe',
-                };
-            }
-
-            return { value: normalized, error: null };
-        },
-        [isWindowsPlatform],
-    );
-
-    const submitPickerInput = useCallback(() => {
-        const query = appPickerSearch.trim();
-        if (!query) {
-            return;
-        }
-
-        const exact = appList.find(
-            (a) =>
-                a.bundle_id.toLowerCase() === query.toLowerCase() ||
-                a.name.toLowerCase() === query.toLowerCase(),
-        );
-        if (exact) {
-            setAppPickerError(null);
-            selectApp(exact);
-            return;
-        }
-
-        const manual = parseManualAppId(query);
-        if (manual.error || !manual.value) {
-            setAppPickerError(manual.error);
-            return;
-        }
-
-        setAppPickerError(null);
-        selectApp({ bundle_id: manual.value, name: manual.value });
-    }, [appList, appPickerSearch, parseManualAppId, selectApp]);
-
-    function updateRule(index: number, patch: Partial<BlockRule>) {
+    function updateRule(index: number, patch: Partial<BlockRuleWithId>): void {
         const updated = rules.map((r, i) =>
             i === index ? { ...r, ...patch } : r,
         );
         void saveRules(updated);
     }
 
-    function removeRule(index: number) {
+    function removeRule(index: number): void {
         void saveRules(rules.filter((_, i) => i !== index));
     }
 
-    function addRule() {
+    function addRule(): void {
         void saveRules([
             ...rules,
-            {
+            withId({
                 from_app_id: null,
                 from_app_name: null,
                 to_app_id: null,
                 to_app_name: null,
                 action: 'notify',
-            },
+            }),
         ]);
     }
 
-    function browseFrom(index: number) {
+    function browseFrom(index: number): void {
         void openAppPicker((app) => {
             updateRule(index, {
                 from_app_id: app.bundle_id,
@@ -249,7 +202,7 @@ function App() {
         });
     }
 
-    function browseTo(index: number) {
+    function browseTo(index: number): void {
         void openAppPicker((app) => {
             updateRule(index, {
                 to_app_id: app.bundle_id,
@@ -258,41 +211,31 @@ function App() {
         });
     }
 
-    function clearFrom(index: number) {
+    function clearFrom(index: number): void {
         updateRule(index, { from_app_id: null, from_app_name: null });
     }
 
-    function clearTo(index: number) {
+    function clearTo(index: number): void {
         updateRule(index, { to_app_id: null, to_app_name: null });
     }
 
-    function toggleAction(index: number) {
+    function toggleAction(index: number): void {
         const current = rules[index].action;
         updateRule(index, {
             action: current === 'notify' ? 'block' : 'notify',
         });
     }
 
-    function isInvalidRule(r: BlockRule) {
+    function isInvalidRule(r: BlockRuleWithId): boolean {
         return r.from_app_id === null && r.to_app_id === null;
     }
 
     const hasBlockRules = rules.some((r) => r.action === 'block');
 
-    async function refreshAccessibility() {
+    async function refreshAccessibility(): Promise<void> {
         const granted = await invoke<boolean>('check_accessibility');
         setAccessibilityGranted(granted);
     }
-
-    const filteredApps = appList.filter((a) => {
-        const q = appPickerSearch.toLowerCase();
-        return (
-            a.name.toLowerCase().includes(q) ||
-            a.bundle_id.toLowerCase().includes(q)
-        );
-    });
-
-    const manualPreview = parseManualAppId(appPickerSearch);
 
     return (
         <main className="container">
@@ -302,8 +245,11 @@ function App() {
                 <div className="row space-between">
                     <span>Protection</span>
                     <button
+                        type="button"
                         className={guardEnabled ? 'btn-on' : 'btn-off'}
-                        onClick={toggleGuard}
+                        onClick={(): void => {
+                            void toggleGuard();
+                        }}
                     >
                         {guardEnabled ? 'Enabled' : 'Disabled'}
                     </button>
@@ -311,8 +257,11 @@ function App() {
                 <div className="row space-between">
                     <span>Launch at login</span>
                     <button
+                        type="button"
                         className={autostartEnabled ? 'btn-on' : 'btn-off'}
-                        onClick={toggleAutostart}
+                        onClick={(): void => {
+                            void toggleAutostart();
+                        }}
                     >
                         {autostartEnabled ? 'On' : 'Off'}
                     </button>
@@ -332,16 +281,22 @@ function App() {
                         {!accessibilityGranted && (
                             <div className="permission-actions">
                                 <button
+                                    type="button"
                                     className="btn-permission"
-                                    onClick={async () =>
-                                        invoke('open_accessibility_settings')
-                                    }
+                                    onClick={(): void => {
+                                        void invoke(
+                                            'open_accessibility_settings',
+                                        );
+                                    }}
                                 >
                                     Grant
                                 </button>
                                 <button
+                                    type="button"
                                     className="btn-refresh"
-                                    onClick={refreshAccessibility}
+                                    onClick={(): void => {
+                                        void refreshAccessibility();
+                                    }}
                                 >
                                     Check
                                 </button>
@@ -360,7 +315,7 @@ function App() {
                 <h2>Rules</h2>
                 {rules.map((rule, i) => (
                     <div
-                        key={i}
+                        key={rule.id}
                         className={`rule-row ${isInvalidRule(rule) ? 'rule-invalid' : ''}`}
                     >
                         <div className="rule-fields">
@@ -371,8 +326,9 @@ function App() {
                                 </span>
                                 <div className="rule-btns">
                                     <button
+                                        type="button"
                                         className="btn-browse"
-                                        onClick={() => {
+                                        onClick={(): void => {
                                             browseFrom(i);
                                         }}
                                     >
@@ -380,8 +336,9 @@ function App() {
                                     </button>
                                     {rule.from_app_id && (
                                         <button
+                                            type="button"
                                             className="btn-clear"
-                                            onClick={() => {
+                                            onClick={(): void => {
                                                 clearFrom(i);
                                             }}
                                         >
@@ -400,8 +357,9 @@ function App() {
                                 </span>
                                 <div className="rule-btns">
                                     <button
+                                        type="button"
                                         className="btn-browse"
-                                        onClick={() => {
+                                        onClick={(): void => {
                                             browseTo(i);
                                         }}
                                     >
@@ -409,8 +367,9 @@ function App() {
                                     </button>
                                     {rule.to_app_id && (
                                         <button
+                                            type="button"
                                             className="btn-clear"
-                                            onClick={() => {
+                                            onClick={(): void => {
                                                 clearTo(i);
                                             }}
                                         >
@@ -423,8 +382,9 @@ function App() {
 
                         <div className="rule-actions">
                             <button
+                                type="button"
                                 className={`action-toggle ${rule.action === 'block' ? 'action-block' : 'action-notify'}`}
-                                onClick={() => {
+                                onClick={(): void => {
                                     toggleAction(i);
                                 }}
                             >
@@ -432,8 +392,9 @@ function App() {
                             </button>
 
                             <button
+                                type="button"
                                 className="btn-remove"
-                                onClick={() => {
+                                onClick={(): void => {
                                     removeRule(i);
                                 }}
                             >
@@ -449,6 +410,7 @@ function App() {
                     </div>
                 ))}
                 <button
+                    type="button"
                     className="btn-add"
                     onClick={addRule}
                 >
@@ -488,95 +450,15 @@ function App() {
                 )}
             </section>
             {appPickerOpen && (
-                <div
-                    role="presentation"
-                    className="app-picker-overlay"
-                    onClick={closeAppPicker}
-                >
-                    <div
-                        role="dialog"
-                        className="app-picker-modal"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                        }}
-                        onKeyDown={(e) => {
-                            e.stopPropagation();
-                        }}
-                    >
-                        <input
-                            ref={searchInputRef}
-                            className="app-picker-search"
-                            type="text"
-                            placeholder={
-                                appList.length > 0
-                                    ? 'Search apps or type app id...'
-                                    : 'Enter app id...'
-                            }
-                            value={appPickerSearch}
-                            onChange={(e) => {
-                                setAppPickerSearch(e.target.value);
-                                if (appPickerError) {
-                                    setAppPickerError(null);
-                                }
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Escape') closeAppPicker();
-                                if (e.key === 'Enter') {
-                                    submitPickerInput();
-                                }
-                            }}
-                        />
-                        <div className="app-picker-list">
-                            {appPickerSearch.trim() && (
-                                <button
-                                    className="app-picker-item app-picker-manual"
-                                    onClick={submitPickerInput}
-                                >
-                                    <span className="app-picker-name">
-                                        Use manual entry
-                                    </span>
-                                    <span className="app-picker-id">
-                                        {manualPreview.value ??
-                                            appPickerSearch.trim()}
-                                    </span>
-                                </button>
-                            )}
-
-                            {filteredApps.map((app) => (
-                                <button
-                                    key={app.bundle_id}
-                                    className="app-picker-item"
-                                    onClick={() => {
-                                        selectApp(app);
-                                    }}
-                                >
-                                    <span className="app-picker-name">
-                                        {app.name}
-                                    </span>
-                                    <span className="app-picker-id">
-                                        {app.bundle_id}
-                                    </span>
-                                </button>
-                            ))}
-
-                            {filteredApps.length === 0 && (
-                                <div className="app-picker-hint">
-                                    {appList.length === 0
-                                        ? 'No detected apps. Type an app id and press Enter'
-                                        : 'No matches. Press Enter for manual entry'}
-                                </div>
-                            )}
-                        </div>
-                        {appPickerError && (
-                            <div className="app-picker-error">
-                                {appPickerError}
-                            </div>
-                        )}
-                    </div>
-                </div>
+                <AppPickerModal
+                    appList={appList}
+                    onSelect={selectApp}
+                    onClose={closeAppPicker}
+                    isWindowsPlatform={isWindowsPlatform}
+                />
             )}
         </main>
     );
 }
 
-export default App;
+export { App };
