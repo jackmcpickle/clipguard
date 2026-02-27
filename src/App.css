@@ -372,6 +372,10 @@ button:hover {
   border-bottom: none;
 }
 
+.app-picker-manual {
+  border-bottom: 1px dashed var(--color-border);
+}
+
 .app-picker-name {
   font-size: 13px;
   font-weight: 500;
@@ -381,4 +385,17 @@ button:hover {
 .app-picker-id {
   font-size: 11px;
   color: var(--color-text-secondary);
+}
+
+.app-picker-hint {
+  padding: 16px 14px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.app-picker-error {
+  padding: 8px 14px 12px;
+  color: var(--color-danger);
+  font-size: 12px;
 }

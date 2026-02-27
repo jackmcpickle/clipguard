@@ -11,7 +11,10 @@ use tauri::{
 
 #[cfg(target_os = "macos")]
 mod clipboard;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+#[path = "clipboard_windows.rs"]
+mod clipboard;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[path = "clipboard_stub.rs"]
 mod clipboard;
 mod config;
@@ -101,6 +104,11 @@ fn list_apps() -> Vec<AppBundleInfo> {
     list_installed_apps()
 }
 
+#[tauri::command]
+fn is_windows_platform() -> bool {
+    cfg!(target_os = "windows")
+}
+
 #[cfg(target_os = "macos")]
 fn list_installed_apps() -> Vec<AppBundleInfo> {
     let dirs = [
@@ -128,7 +136,128 @@ fn list_installed_apps() -> Vec<AppBundleInfo> {
     apps
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn list_installed_apps() -> Vec<AppBundleInfo> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    fn normalized_windows_app_id(raw: &str) -> Option<String> {
+        let stripped = raw
+            .split(',')
+            .next()
+            .unwrap_or(raw)
+            .trim()
+            .trim_matches('"')
+            .trim();
+        let file = stripped
+            .rsplit(|c| c == '\\' || c == '/')
+            .next()
+            .unwrap_or(stripped)
+            .trim();
+        if file.is_empty() {
+            return None;
+        }
+        let lower = file.to_ascii_lowercase();
+        if !lower.ends_with(".exe") {
+            return None;
+        }
+        Some(lower)
+    }
+
+    let paths = [
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    ];
+
+    let mut apps = Vec::new();
+
+    for (root, path) in &paths {
+        let Ok(key) = RegKey::predef(*root).open_subkey_with_flags(path, KEY_READ) else {
+            continue;
+        };
+        for name in key.enum_keys().filter_map(|k| k.ok()) {
+            let Ok(subkey) = key.open_subkey_with_flags(&name, KEY_READ) else {
+                continue;
+            };
+
+            // Skip system components
+            if subkey.get_value::<u32, _>("SystemComponent").unwrap_or(0) == 1 {
+                continue;
+            }
+
+            let Ok(display_name) = subkey.get_value::<String, _>("DisplayName") else {
+                continue;
+            };
+            let display_name = display_name.trim().to_string();
+            if display_name.is_empty() {
+                continue;
+            }
+            let display_name_lc = display_name.to_ascii_lowercase();
+
+            // Skip Windows updates, runtimes, SDKs
+            if display_name_lc.starts_with("kb")
+                || display_name_lc.contains("redistributable")
+                || display_name_lc.contains("sdk")
+                || display_name_lc.contains("runtime")
+            {
+                continue;
+            }
+
+            // Derive exe name from DisplayIcon or InstallLocation
+            let exe_name = subkey
+                .get_value::<String, _>("DisplayIcon")
+                .ok()
+                .and_then(|icon| normalized_windows_app_id(&icon))
+                .or_else(|| {
+                    subkey
+                        .get_value::<String, _>("InstallLocation")
+                        .ok()
+                        .and_then(|loc| {
+                            // Try to find an exe in the install location
+                            std::fs::read_dir(&loc).ok().and_then(|entries| {
+                                entries
+                                    .filter_map(|e| e.ok())
+                                    .find(|e| {
+                                        e.path()
+                                            .extension()
+                                            .map_or(false, |ext| ext.eq_ignore_ascii_case("exe"))
+                                    })
+                                    .and_then(|e| {
+                                        normalized_windows_app_id(
+                                            e.file_name().to_string_lossy().as_ref(),
+                                        )
+                                    })
+                            })
+                        })
+                });
+
+            let Some(bundle_id) = exe_name else {
+                continue;
+            };
+
+            apps.push(AppBundleInfo {
+                bundle_id,
+                name: display_name,
+            });
+        }
+    }
+
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps.dedup_by(|a, b| a.bundle_id.eq_ignore_ascii_case(&b.bundle_id));
+    apps
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn list_installed_apps() -> Vec<AppBundleInfo> {
     Vec::new()
 }
@@ -176,6 +305,7 @@ pub fn run() {
             get_rules,
             set_rules,
             list_apps,
+            is_windows_platform,
             check_accessibility,
             open_accessibility_settings,
         ])

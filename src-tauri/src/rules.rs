@@ -79,17 +79,20 @@ pub fn matches_rule(
     source_app_id: Option<&str>,
     dest_app_id: &str,
 ) -> Option<BlockRule> {
-    rules.iter().find(|r| {
-        let from_matches = match &r.from_app_id {
-            None => true,
-            Some(id) => source_app_id
-                .map(|s| s.eq_ignore_ascii_case(id))
-                .unwrap_or(false),
-        };
-        let to_matches = match &r.to_app_id {
-            None => true,
-            Some(id) => id.eq_ignore_ascii_case(dest_app_id),
-        };
-        from_matches && to_matches
-    }).cloned()
+    rules
+        .iter()
+        .find(|r| {
+            let from_matches = match &r.from_app_id {
+                None => true,
+                Some(id) => source_app_id
+                    .map(|s| s.eq_ignore_ascii_case(id))
+                    .unwrap_or(false),
+            };
+            let to_matches = match &r.to_app_id {
+                None => true,
+                Some(id) => id.eq_ignore_ascii_case(dest_app_id),
+            };
+            from_matches && to_matches
+        })
+        .cloned()
 }

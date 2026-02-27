@@ -18,7 +18,10 @@ impl Default for Config {
 }
 
 fn config_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("config.json"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("config.json"))
 }
 
 pub fn load(app: &tauri::AppHandle) -> Config {

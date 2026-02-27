@@ -38,6 +38,7 @@ interface AppBundleInfo {
 }
 
 function App() {
+  const [isWindowsPlatform, setIsWindowsPlatform] = useState(false);
   const [guardEnabled, setGuardEnabled] = useState(true);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [lastSource, setLastSource] = useState<ClipboardEvent | null>(null);
@@ -49,6 +50,7 @@ function App() {
   const [appList, setAppList] = useState<AppBundleInfo[]>([]);
   const [appPickerOpen, setAppPickerOpen] = useState(false);
   const [appPickerSearch, setAppPickerSearch] = useState("");
+  const [appPickerError, setAppPickerError] = useState<string | null>(null);
   const appPickerCallbackRef = useRef<((app: AppBundleInfo) => void) | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,6 +58,7 @@ function App() {
     const cleanups: (() => void)[] = [];
 
     invoke<boolean>("get_enabled").then(setGuardEnabled);
+    invoke<boolean>("is_windows_platform").then(setIsWindowsPlatform);
     isEnabled().then(setAutostartEnabled);
     invoke<BlockRule[]>("get_rules").then((loaded) => {
       if (loaded.length === 0) {
@@ -122,6 +125,7 @@ function App() {
   const openAppPicker = useCallback(async (callback: (app: AppBundleInfo) => void) => {
     appPickerCallbackRef.current = callback;
     setAppPickerSearch("");
+    setAppPickerError(null);
     const apps = await invoke<AppBundleInfo[]>("list_apps");
     setAppList(apps);
     setAppPickerOpen(true);
@@ -137,6 +141,53 @@ function App() {
     appPickerCallbackRef.current?.(app);
     closeAppPicker();
   }, [closeAppPicker]);
+
+  const parseManualAppId = useCallback((raw: string) => {
+    const trimmed = raw.trim().replace(/^['"]+|['"]+$/g, "");
+    if (!trimmed) {
+      return { value: null, error: "Enter an app id" };
+    }
+
+    if (!isWindowsPlatform) {
+      return { value: trimmed, error: null };
+    }
+
+    if (trimmed.includes("\\") || trimmed.includes("/")) {
+      return { value: null, error: "Use exe name only (example: msedge.exe)" };
+    }
+
+    const normalized = trimmed.toLowerCase();
+    if (!normalized.endsWith(".exe")) {
+      return { value: null, error: "Windows app id must end with .exe" };
+    }
+
+    return { value: normalized, error: null };
+  }, [isWindowsPlatform]);
+
+  const submitPickerInput = useCallback(() => {
+    const query = appPickerSearch.trim();
+    if (!query) {
+      return;
+    }
+
+    const exact = appList.find((a) =>
+      a.bundle_id.toLowerCase() === query.toLowerCase() || a.name.toLowerCase() === query.toLowerCase()
+    );
+    if (exact) {
+      setAppPickerError(null);
+      selectApp(exact);
+      return;
+    }
+
+    const manual = parseManualAppId(query);
+    if (manual.error || !manual.value) {
+      setAppPickerError(manual.error);
+      return;
+    }
+
+    setAppPickerError(null);
+    selectApp({ bundle_id: manual.value, name: manual.value });
+  }, [appList, appPickerSearch, parseManualAppId, selectApp]);
 
   const updateRule = (index: number, patch: Partial<BlockRule>) => {
     const updated = rules.map((r, i) => (i === index ? { ...r, ...patch } : r));
@@ -200,6 +251,13 @@ function App() {
     const granted = await invoke<boolean>("check_accessibility");
     setAccessibilityGranted(granted);
   };
+
+  const filteredApps = appList.filter((a) => {
+    const q = appPickerSearch.toLowerCase();
+    return a.name.toLowerCase().includes(q) || a.bundle_id.toLowerCase().includes(q);
+  });
+
+  const manualPreview = parseManualAppId(appPickerSearch);
 
   return (
     <main className="container">
@@ -364,28 +422,54 @@ function App() {
               ref={searchInputRef}
               className="app-picker-search"
               type="text"
-              placeholder="Search apps..."
+              placeholder={appList.length > 0 ? "Search apps or type app id..." : "Enter app id..."}
               value={appPickerSearch}
-              onChange={(e) => setAppPickerSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Escape" && closeAppPicker()}
+              onChange={(e) => {
+                setAppPickerSearch(e.target.value);
+                if (appPickerError) {
+                  setAppPickerError(null);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") closeAppPicker();
+                if (e.key === "Enter") {
+                  submitPickerInput();
+                }
+              }}
             />
             <div className="app-picker-list">
-              {appList
-                .filter((a) => {
-                  const q = appPickerSearch.toLowerCase();
-                  return a.name.toLowerCase().includes(q) || a.bundle_id.toLowerCase().includes(q);
-                })
-                .map((app) => (
-                  <button
-                    key={app.bundle_id}
-                    className="app-picker-item"
-                    onClick={() => selectApp(app)}
-                  >
-                    <span className="app-picker-name">{app.name}</span>
-                    <span className="app-picker-id">{app.bundle_id}</span>
-                  </button>
-                ))}
+              {appPickerSearch.trim() && (
+                <button
+                  className="app-picker-item app-picker-manual"
+                  onClick={submitPickerInput}
+                >
+                  <span className="app-picker-name">Use manual entry</span>
+                  <span className="app-picker-id">
+                    {manualPreview.value ?? appPickerSearch.trim()}
+                  </span>
+                </button>
+              )}
+
+              {filteredApps.map((app) => (
+                <button
+                  key={app.bundle_id}
+                  className="app-picker-item"
+                  onClick={() => selectApp(app)}
+                >
+                  <span className="app-picker-name">{app.name}</span>
+                  <span className="app-picker-id">{app.bundle_id}</span>
+                </button>
+              ))}
+
+              {filteredApps.length === 0 && (
+                <div className="app-picker-hint">
+                  {appList.length === 0
+                    ? "No detected apps. Type an app id and press Enter"
+                    : "No matches. Press Enter for manual entry"}
+                </div>
+              )}
             </div>
+            {appPickerError && <div className="app-picker-error">{appPickerError}</div>}
           </div>
         </div>
       )}

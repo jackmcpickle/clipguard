@@ -295,10 +295,7 @@ pub fn start_clipboard_monitor(app: AppHandle, state: Arc<Mutex<ClipboardState>>
                 continue;
             };
 
-            let source = state
-                .lock()
-                .ok()
-                .and_then(|s| s.last_copy_source.clone());
+            let source = state.lock().ok().and_then(|s| s.last_copy_source.clone());
 
             let Some(source) = source else {
                 continue;
@@ -328,10 +325,7 @@ pub fn start_clipboard_monitor(app: AppHandle, state: Arc<Mutex<ClipboardState>>
             }
             last_warned = Some(warn_key);
 
-            let src_name = source
-                .source_app_name
-                .as_deref()
-                .unwrap_or("Unknown app");
+            let src_name = source.source_app_name.as_deref().unwrap_or("Unknown app");
             let dst_name = current_name.as_deref().unwrap_or("Unknown app");
 
             let (body, blocked) = match matched.action {
@@ -350,10 +344,7 @@ pub fn start_clipboard_monitor(app: AppHandle, state: Arc<Mutex<ClipboardState>>
                         if let Ok(mut s) = state.lock() {
                             s.blocking_active = true;
                         }
-                        (
-                            format!("Paste blocked: {} → {}", src_name, dst_name),
-                            true,
-                        )
+                        (format!("Paste blocked: {} → {}", src_name, dst_name), true)
                     } else {
                         // Fall back to notify when accessibility not granted
                         (
