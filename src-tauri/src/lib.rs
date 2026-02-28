@@ -340,17 +340,17 @@ pub fn run() {
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = Menu::with_items(app, &[&toggle_item, &show_item, &quit_item])?;
 
-            // Build tray icon
-            let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
-                tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
-                    .expect("bundled icon")
-            });
+            // Build tray icon — use dedicated tray icon (simple silhouette)
+            let tray_icon =
+                tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
+                    .expect("bundled tray icon");
 
             app.manage(ToggleMenuItem(toggle_item.clone()));
 
             let state_for_tray = clip_state.clone();
             let tray = TrayIconBuilder::new()
-                .icon(icon)
+                .icon(tray_icon)
+                .icon_as_template(true)
                 .tooltip("Clipboard Guard")
                 .menu(&menu)
                 .show_menu_on_left_click(true)

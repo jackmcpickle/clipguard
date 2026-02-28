@@ -46,7 +46,7 @@
     "lint-staged": {
         "**/*.{js,jsx,ts,tsx,json,css,scss,md,mdx,yml,yaml}": "oxfmt --write --no-error-on-unmatched-pattern",
         "src/**/*.{js,jsx,ts,tsx}": "oxlint -c .oxlintrc.json --type-aware --type-check --fix --quiet",
-        "**/*.rs": "cargo fmt --all"
+        "**/*.rs": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --"
     },
     "commitlint": {
         "extends": [

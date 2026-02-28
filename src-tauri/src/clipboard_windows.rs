@@ -7,14 +7,15 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
+use windows::core::PWSTR;
+use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Foundation::WPARAM;
 use windows::Win32::Foundation::{CloseHandle, LRESULT};
 use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32_PATH,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -78,7 +79,12 @@ fn get_frontmost_app() -> (Option<String>, Option<String>) {
 
         let mut buf = [0u16; 1024];
         let mut size = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32_PATH, &mut buf, &mut size);
+        let ok = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut size,
+        );
         let _ = CloseHandle(handle);
 
         if ok.is_err() || size == 0 {
@@ -139,7 +145,8 @@ enum BlockerMsg {
 
 fn run_blocker_thread(rx: mpsc::Receiver<BlockerMsg>) {
     unsafe {
-        let hinstance = GetModuleHandleW(None).ok();
+        let hmodule = GetModuleHandleW(None).ok();
+        let hinstance = hmodule.map(|m| HINSTANCE(m.0));
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), hinstance, 0);
         let Ok(hook) = hook else {
             eprintln!("clipboard_windows: failed to install keyboard hook");
