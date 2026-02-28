@@ -1,6 +1,6 @@
 {
     "name": "clipguard",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "private": true,
     "description": "A secure cross-app copy-paste tool",
     "author": "Jack McNicol <jack@mcpickle.com.au>",
