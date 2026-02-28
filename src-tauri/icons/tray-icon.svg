@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Simplified shield + clipboard silhouette for tray (template image) -->
+  <!-- Shield -->
+  <path d="M256 28L60 120v152c0 120 84 196 196 212 112-16 196-92 196-212V120L256 28z"
+        fill="#000"/>
+  <!-- Clipboard body cutout -->
+  <rect x="176" y="168" width="160" height="200" rx="14" fill="#fff"/>
+  <!-- Clipboard clip tab -->
+  <rect x="220" y="148" width="72" height="40" rx="8" fill="#fff"/>
+  <!-- Clipboard clip hole -->
+  <rect x="236" y="156" width="40" height="24" rx="6" fill="#000"/>
+  <!-- Clipboard lines -->
+  <rect x="204" y="232" width="104" height="14" rx="3" fill="#000"/>
+  <rect x="204" y="264" width="104" height="14" rx="3" fill="#000"/>
+  <rect x="204" y="296" width="72" height="14" rx="3" fill="#000"/>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Shield outline -->
+  <path d="M256 28L60 120v152c0 120 84 196 196 212 112-16 196-92 196-212V120L256 28z"
+        stroke="#000" stroke-width="24" stroke-linejoin="round" fill="#000"/>
+  <!-- Clipboard body -->
+  <rect x="168" y="160" width="176" height="220" rx="16" fill="#fff"/>
+  <!-- Clipboard clip tab -->
+  <rect x="216" y="140" width="80" height="44" rx="10" fill="#fff"/>
+  <!-- Clipboard clip hole -->
+  <rect x="234" y="148" width="44" height="28" rx="8" fill="#000"/>
+  <!-- Clipboard lines -->
+  <rect x="200" y="228" width="112" height="16" rx="4" fill="#000"/>
+  <rect x="200" y="264" width="112" height="16" rx="4" fill="#000"/>
+  <rect x="200" y="300" width="80" height="16" rx="4" fill="#000"/>
+</svg>
